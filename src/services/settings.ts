@@ -25,6 +25,32 @@ export function getTextOverride(key: string): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
+/**
+ * Telegram chat that admin / order logs are sent to. Reads the settings
+ * table first so the destination can be changed without a redeploy, and
+ * falls back to the LOG_CHAT_ID / ORDER_LOG_CHAT_ID env vars.
+ *
+ * Accepts `@username` and numeric `-100…` ids. An empty value means
+ * "not configured" so the caller walks its own fallback chain.
+ */
+function readChatSetting(key: string): string | undefined {
+  const v = cache.get(key);
+  if (typeof v === 'number' && Number.isInteger(v)) return String(v);
+  if (typeof v !== 'string') return undefined;
+  const trimmed = v.trim();
+  if (trimmed.length === 0) return undefined;
+  if (/^(0|off|none|disabled)$/i.test(trimmed)) return undefined;
+  return trimmed;
+}
+
+export function getLogChatId(): string | undefined {
+  return readChatSetting('bot.log_chat_id');
+}
+
+export function getOrderLogChatId(): string | undefined {
+  return readChatSetting('bot.order_log_chat_id');
+}
+
 /** Get color mode for a button key. Falls back to the default. */
 export function getButtonColor(key: keyof typeof DEFAULT_BUTTON_COLORS): ColorMode {
   const v = cache.get(`color.${key}`);

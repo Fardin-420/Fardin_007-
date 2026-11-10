@@ -29,6 +29,7 @@ import type { Api, InputFile } from 'grammy';
 import { InlineKeyboard } from 'grammy';
 import { env } from '../env.js';
 import { logger } from '../logger.js';
+import { getLogChatId, getOrderLogChatId } from './settings.js';
 import * as publicFeed from './publicFeed.js';
 
 /**
@@ -161,10 +162,15 @@ function chatChain(channel: LogChannel): ChatId[] {
     seen.add(chat);
     chain.push(chat);
   };
+  // Settings table first (changeable from the DB without a redeploy),
+  // then the env var, then the fallback chain.
   if (channel === 'orders') {
+    push(getOrderLogChatId());
     push(env.ORDER_LOG_CHAT_ID);
+    push(getLogChatId());
     push(env.LOG_CHAT_ID);
   } else {
+    push(getLogChatId());
     push(env.LOG_CHAT_ID);
   }
   push(env.ADMIN_USER_ID);
