@@ -591,6 +591,48 @@ export function supplierSellPrice(
   );
 }
 
+/**
+ * Pull the display fields a supplier ships alongside price and stock, so an
+ * imported product arrives with its real description and its icon rather than
+ * a bare placeholder.
+ *
+ * Suppliers disagree on names: LaraStock sends `desc_en` plus a premium
+ * `custom_emoji_id`, others use `description` or `note`. The HTML variants are
+ * preferred where present because they carry Telegram premium-emoji markup.
+ */
+export function supplierPresentation(raw: Record<string, unknown>): {
+  description: string | null;
+  emoji: string | null;
+  emojiId: string | null;
+} {
+  const description =
+    asString(
+      firstValue(raw, [
+        'desc_en_html',
+        'desc_en',
+        'description_html',
+        'description',
+        'desc',
+        'desc_ar_html',
+        'desc_ar',
+        'description_raw',
+        'note',
+      ]),
+    )?.trim() || null;
+
+  const emojiId =
+    asString(firstValue(raw, ['custom_emoji_id', 'emoji_id', 'customEmojiId']))?.trim() || null;
+
+  // The plain glyph is the fallback Telegram shows when a viewer has no
+  // premium emoji; it sits inside the <tg-emoji> wrapper of the HTML name.
+  const nameHtml = asString(firstValue(raw, ['name_en_html', 'name_ar_html', 'name_html'])) ?? '';
+  const wrapped = /<tg-emoji[^>]*>([^<]+)<\/tg-emoji>/.exec(nameHtml);
+  const emoji =
+    asString(firstValue(raw, ['emoji', 'icon']))?.trim() || (wrapped ? wrapped[1]!.trim() : null);
+
+  return { description, emoji, emojiId };
+}
+
 export async function importSupplierProduct(args: {
   source: DBSupplierApiSource;
   product: SupplierCatalogProduct;
@@ -617,17 +659,16 @@ export async function importSupplierProduct(args: {
     '🔌',
   );
   const stock = args.product.stock ?? 0;
-  const description =
-    asString(firstValue(args.product.raw, ['description', 'description_raw', 'note'])) ??
-    `Supplier product from ${args.source.name}.`;
+  const presentation = supplierPresentation(args.product.raw);
   const local = await addProduct({
     category_id: category.id,
     name: args.product.name,
     price: supplierSellPrice(args.source, args.product),
     stock,
     warranty: 'Supplier auto delivery',
-    description,
-    emoji: '',
+    description: presentation.description ?? `Supplier product from ${args.source.name}.`,
+    emoji: presentation.emoji ?? '',
+    emoji_id: presentation.emojiId,
     unlimited_stock: false,
   });
   if (args.active === false || (args.active === undefined && args.source.auto_import_active === false)) {
