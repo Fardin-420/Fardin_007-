@@ -106,11 +106,27 @@ export function resolveStyle(
   return colorModeToStyle(override ?? getButtonColor(key));
 }
 
+/**
+ * Turn button icons/styles off after Telegram rejected them.
+ *
+ * This used to latch off for the whole process, so one bad icon anywhere
+ * stripped every icon in the bot until the next restart - and nothing ever
+ * turned it back on. It now lapses, so the bot recovers by itself once the
+ * offending button is fixed.
+ */
+const BUTTON_CHROME_RETRY_MS = 10 * 60 * 1000;
+let buttonChromeDisabledAt = 0;
+
 export function disableButtonChrome(): void {
   buttonChromeEnabled = false;
+  buttonChromeDisabledAt = Date.now();
 }
 
 export function isButtonChromeEnabled(): boolean {
+  if (!buttonChromeEnabled && Date.now() - buttonChromeDisabledAt >= BUTTON_CHROME_RETRY_MS) {
+    buttonChromeEnabled = true;
+    buttonChromeDisabledAt = 0;
+  }
   return buttonChromeEnabled;
 }
 
@@ -136,7 +152,7 @@ export function applyButtonChrome(
   key: keyof typeof BUTTON_KEYS,
   override?: ColorMode,
 ): InlineKeyboard {
-  if (!buttonChromeEnabled) return kb;
+  if (!isButtonChromeEnabled()) return kb;
   const iconId = resolveIconId(key);
   if (iconId !== undefined) kb.icon(iconId);
   const style = resolveStyle(key, override);

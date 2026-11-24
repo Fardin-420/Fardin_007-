@@ -592,6 +592,38 @@ export function supplierSellPrice(
 }
 
 /**
+ * Fallback glyph for an imported product, by name.
+ *
+ * Suppliers often send a `custom_emoji_id` from an emoji pack this bot
+ * cannot resolve. Telegram drops an icon it cannot resolve without raising
+ * an error, which leaves the button with no glyph at all, so a plain
+ * unicode emoji is stored as well - it renders for every user, premium or
+ * not.
+ */
+const SUPPLIER_EMOJI_RULES: Array<[RegExp, string]> = [
+  [/chatgpt|openai/i, '\u{1F7E2}'],
+  [/claude/i, '\u{1F9E0}'],
+  [/gemini|google ai|antigravity/i, '\u{2728}'],
+  [/grok/i, '\u{1F916}'],
+  [/seedance|kling|muse/i, '\u{1F39E}'],
+  [/elevenlabs|wispr/i, '\u{1F399}'],
+  [/replit|bolt\.new|lovable|warp|railway|descript/i, '\u{1F4BB}'],
+  [/figma|canva|adobe|framer|magic pattern|mobbin|capcut|picsart/i, '\u{1F3A8}'],
+  [/spotify|apple music/i, '\u{1F3B5}'],
+  [/crunchyroll|apple tv|osn|netflix|youtube/i, '\u{1F3AC}'],
+  [/vpn|hotspot shield/i, '\u{1F510}'],
+  [/duolingo|udemy|edx|coursera/i, '\u{1F393}'],
+  [/hotmail|outlook|mail/i, '\u{1F4E7}'],
+  [/notion|zoom|office|granola|ilovepdf|joinsecret|intercom|customer\.io|pangram|nitro|discord/i, '\u{1F4CA}'],
+];
+
+/** Pick the unicode glyph shown on an imported product's button. */
+export function supplierEmojiFor(name: string): string {
+  const hit = SUPPLIER_EMOJI_RULES.find(([rx]) => rx.test(name));
+  return hit ? hit[1] : '\u{1F4E6}';
+}
+
+/**
  * Keyword routing for imported supplier products.
  *
  * Suppliers rarely send a category, so without this every product lands in
@@ -700,8 +732,10 @@ export async function importSupplierProduct(args: {
     stock,
     warranty: 'Supplier auto delivery',
     description: presentation.description ?? `Supplier product from ${args.source.name}.`,
-    emoji: presentation.emoji ?? '',
-    emoji_id: presentation.emojiId,
+    // Always a resolvable glyph; the supplier's own custom emoji id is kept
+    // only when this bot can actually render it (see supplierEmojiFor).
+    emoji: supplierEmojiFor(args.product.name),
+    emoji_id: null,
     unlimited_stock: false,
   });
   if (args.active === false || (args.active === undefined && args.source.auto_import_active === false)) {
