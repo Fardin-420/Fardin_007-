@@ -22,6 +22,11 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+/** Stock values that mean "no cap" rather than a quantity. */
+const UNLIMITED_STOCK_RE = /^(unlimited|unlimited_stock|infinite|infinity|unbegrenzt|∞)$/i;
+/** Finite stand-in used for unlimited supplier stock. */
+const UNLIMITED_STOCK_QTY = 999_999;
+
 export type SupplierCatalogProduct = {
   id: string;
   name: string;
@@ -507,16 +512,21 @@ function normalizeCatalogProduct(
       'amount',
     ]),
   );
-  const stock = asNumber(
-    firstValue(row, [
-      source.product_stock_json_path,
-      'stock',
-      'quantity',
-      'qty',
-      'available',
-      'count',
-    ]),
-  );
+  const rawStock = firstValue(row, [
+    source.product_stock_json_path,
+    'stock',
+    'quantity',
+    'qty',
+    'available',
+    'count',
+  ]);
+  // Some suppliers report an uncapped product as the string "unlimited"
+  // (LaraStock) or "∞" instead of a number. asNumber() yields null for
+  // those, which would import the product with 0 stock and make it
+  // unsellable, so they are mapped to a large finite quantity instead.
+  const stock = UNLIMITED_STOCK_RE.test(String(rawStock ?? '').trim())
+    ? UNLIMITED_STOCK_QTY
+    : asNumber(rawStock);
   return {
     id,
     name,
@@ -920,6 +930,33 @@ export async function trySupplierAutoOrder(args: {
         supplierProductId: link.supplier_product_id,
         error,
         lowBalance: isSupplierLowBalanceMessage(error),
+      });
+      return null;
+    }
+    // A supplier can answer "success" while delivering no codes: LaraStock
+    // returns status `pending_manual` with an order id for products its own
+    // admin fulfils by hand. Completing the local order on that response
+    // would charge the buyer and hand them nothing, so it is treated as a
+    // failed auto-order and the normal manual-delivery path takes over.
+    if (result.items.length === 0) {
+      const supplierOrderId =
+        asString(firstValue(result.raw, ['order_id', 'order.id', 'data.order_id', 'id'])) ?? null;
+      const error = [
+        `Supplier accepted the order but returned no items (status: ${result.status ?? 'unknown'}).`,
+        supplierOrderId ? `Supplier order id: ${supplierOrderId}.` : null,
+        'Deliver this one manually.',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      await updateSupplierProductLink(link.id, { last_error: error }).catch((updateErr) =>
+        logger.warn({ err: updateErr }, 'supplier link error update failed'),
+      );
+      await args.onFailure?.({
+        supplierId: source.id,
+        supplierName: source.name,
+        supplierProductId: link.supplier_product_id,
+        error,
+        lowBalance: false,
       });
       return null;
     }
