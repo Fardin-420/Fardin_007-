@@ -732,10 +732,12 @@ export async function importSupplierProduct(args: {
     stock,
     warranty: 'Supplier auto delivery',
     description: presentation.description ?? `Supplier product from ${args.source.name}.`,
-    // Always a resolvable glyph; the supplier's own custom emoji id is kept
-    // only when this bot can actually render it (see supplierEmojiFor).
-    emoji: supplierEmojiFor(args.product.name),
-    emoji_id: null,
+    // The supplier's brand icon when it ships one, with a plain unicode
+    // glyph alongside it: that glyph is the fallback Telegram shows inside
+    // the <tg-emoji> wrapper, and the button label's prefix when there is
+    // no custom emoji id at all.
+    emoji: presentation.emoji ?? supplierEmojiFor(args.product.name),
+    emoji_id: presentation.emojiId,
     unlimited_stock: false,
   });
   if (args.active === false || (args.active === undefined && args.source.auto_import_active === false)) {
