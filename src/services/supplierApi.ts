@@ -1005,6 +1005,62 @@ export async function placeSupplierOrder(args: {
   }
 }
 
+/**
+ * Can the supplier actually fulfil this order right now?
+ *
+ * The buyer's wallet is charged before the supplier order is placed, and a
+ * supplier failure leaves the order on the manual-delivery placeholder - so
+ * without this check a buyer pays and receives nothing until the admin
+ * refunds by hand. The commonest cause by far is the reseller account
+ * running out of balance, which is knowable up front.
+ *
+ * Returns ok:true for anything not auto-ordered from a supplier, so normal
+ * stock-pool products are unaffected.
+ */
+const BALANCE_CACHE_MS = 60_000;
+const balanceCache = new Map<number, { value: number | null; at: number }>();
+
+async function cachedSupplierBalance(
+  source: DBSupplierApiSource,
+): Promise<number | null> {
+  const hit = balanceCache.get(source.id);
+  if (hit && Date.now() - hit.at < BALANCE_CACHE_MS) return hit.value;
+  let value: number | null = null;
+  try {
+    value = await fetchSupplierBalance(source);
+  } catch (err) {
+    logger.warn({ err, supplierId: source.id }, 'supplier balance check failed');
+    value = null;
+  }
+  balanceCache.set(source.id, { value, at: Date.now() });
+  return value;
+}
+
+/** Clear the cached balance, e.g. right after an order spends from it. */
+export function invalidateSupplierBalance(supplierId: number): void {
+  balanceCache.delete(supplierId);
+}
+
+export async function supplierCanFulfill(args: {
+  localProductId: number;
+  qty: number;
+}): Promise<{ ok: boolean; needed: number; available: number }> {
+  const pass = { ok: true, needed: 0, available: 0 };
+  const link = await getSupplierProductLinkByProduct(args.localProductId).catch(() => null);
+  if (!link || !link.auto_order) return pass;
+  const source = await getSupplierApiSource(link.supplier_id);
+  if (!source || !source.enabled) return pass;
+  const cost = Number(link.supplier_cost ?? 0);
+  if (!Number.isFinite(cost) || cost <= 0) return pass;
+  const balance = await cachedSupplierBalance(source);
+  // An unreadable balance must not block sales: fall through and let the
+  // order attempt decide, exactly as before this check existed.
+  if (balance === null) return pass;
+  const needed = cost * args.qty;
+  if (balance + 1e-9 >= needed) return { ok: true, needed, available: balance };
+  return { ok: false, needed, available: balance };
+}
+
 export async function trySupplierAutoOrder(args: {
   localProductId: number;
   qty: number;
@@ -1070,6 +1126,7 @@ export async function trySupplierAutoOrder(args: {
       });
       return null;
     }
+    invalidateSupplierBalance(source.id);
     return { items: result.items, status: result.status, supplierName: source.name };
   } catch (err) {
     const error = errorMessage(err);

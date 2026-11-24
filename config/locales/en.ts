@@ -360,6 +360,8 @@ export const en: Record<string, string> = {
     'Coming soon — admin will deliver your items manually within 12h.',
   'shop.buy.preorder_pending':
     'Preorder pending — automatically deliver will be done after restock.',
+  'shop.buy.supplier_unavailable':
+    'This item is temporarily unavailable. Please try again later or contact support.',
   'shop.buy.insufficient':
     '❌ Insufficient wallet balance. You need *{need}* but only have *{have}*. Please top up first.',
   'shop.buy.no_stock': '❌ Sorry, this item is out of stock.',

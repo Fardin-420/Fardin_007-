@@ -62,7 +62,7 @@ import {
 import { env } from '../env.js';
 import { publicOrderId } from '../services/orderId.js';
 import { buildOrderDeliveredChunks } from '../services/orderRender.js';
-import { trySupplierAutoOrder } from '../services/supplierApi.js';
+import { supplierCanFulfill, trySupplierAutoOrder } from '../services/supplierApi.js';
 import * as adminLog from '../services/adminLog.js';
 import { logger } from '../logger.js';
 import { sendInvoiceEmail } from '../services/mailer.js';
@@ -1522,6 +1522,37 @@ export function registerShop(bot: Composer<AppCtx>): void {
       await showLowReferralBalance(ctx, p, referral);
       return;
     }
+    // The buyer is charged below, before the supplier order is placed, so
+    // refuse up front when the supplier plainly cannot fulfil it. Without
+    // this the buyer pays and waits on a manual-delivery placeholder.
+    const fulfil = await supplierCanFulfill({ localProductId: p.id, qty });
+    if (!fulfil.ok) {
+      logger.warn(
+        { productId: p.id, qty, needed: fulfil.needed, available: fulfil.available },
+        'purchase blocked: supplier balance too low',
+      );
+      await ctx.answerCallbackQuery({
+        text: ctx.t('shop.buy.supplier_unavailable'),
+        show_alert: true,
+      });
+      await adminLog
+        .logBalanceChange(ctx.api, {
+          user: {
+            telegram_id: ctx.user.telegram_id,
+            username: ctx.from?.username ?? null,
+            first_name: ctx.from?.first_name ?? null,
+          },
+          delta: 0,
+          balanceAfter: ctx.user.balance,
+          by: 'order' as const,
+          reason:
+            `SALE BLOCKED - ${p.name} x${qty}. Supplier needs ` +
+            `$${fulfil.needed.toFixed(2)} but the reseller balance is ` +
+            `$${fulfil.available.toFixed(2)}. Top up the supplier account.`,
+        })
+        .catch((err) => logger.warn({ err }, 'supplier preflight admin log failed'));
+      return;
+    }
     await ctx.answerCallbackQuery();
     try {
       const total = 0;
@@ -1698,6 +1729,37 @@ export function registerShop(bot: Composer<AppCtx>): void {
         text: ctx.t('shop.buy.insufficient', { need: total, have: ctx.user.balance }),
         show_alert: true,
       });
+      return;
+    }
+    // The buyer is charged below, before the supplier order is placed, so
+    // refuse up front when the supplier plainly cannot fulfil it. Without
+    // this the buyer pays and waits on a manual-delivery placeholder.
+    const fulfil = await supplierCanFulfill({ localProductId: p.id, qty });
+    if (!fulfil.ok) {
+      logger.warn(
+        { productId: p.id, qty, needed: fulfil.needed, available: fulfil.available },
+        'purchase blocked: supplier balance too low',
+      );
+      await ctx.answerCallbackQuery({
+        text: ctx.t('shop.buy.supplier_unavailable'),
+        show_alert: true,
+      });
+      await adminLog
+        .logBalanceChange(ctx.api, {
+          user: {
+            telegram_id: ctx.user.telegram_id,
+            username: ctx.from?.username ?? null,
+            first_name: ctx.from?.first_name ?? null,
+          },
+          delta: 0,
+          balanceAfter: ctx.user.balance,
+          by: 'order' as const,
+          reason:
+            `SALE BLOCKED - ${p.name} x${qty}. Supplier needs ` +
+            `$${fulfil.needed.toFixed(2)} but the reseller balance is ` +
+            `$${fulfil.available.toFixed(2)}. Top up the supplier account.`,
+        })
+        .catch((err) => logger.warn({ err }, 'supplier preflight admin log failed'));
       return;
     }
     try {

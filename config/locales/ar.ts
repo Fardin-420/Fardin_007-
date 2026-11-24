@@ -193,6 +193,8 @@ export const ar: Record<string, string> = {
   ].join('\n'),
   'shop.buy.success':
     '✅ تمت عملية الشراء!\n\nالمنتج: *{name}*\nالكمية: *{qty}*\nالإجمالي: *{total}*\n\nالتسليم:\n```\n{delivery}\n```',
+  'shop.buy.supplier_unavailable':
+    'This item is temporarily unavailable. Please try again later or contact support.',
   'shop.buy.insufficient': '❌ رصيد غير كافٍ. تحتاج *{need}* ولديك *{have}* فقط. يرجى الشحن أولاً.',
   'shop.buy.no_stock': '❌ عذرًا، هذا المنتج غير متوفر.',
   'shop.referral.disabled': '❌ دفع الإحالات غير مفعّل لهذا المنتج.',

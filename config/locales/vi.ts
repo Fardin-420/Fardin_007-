@@ -195,6 +195,8 @@ export const vi: Record<string, string> = {
   ].join('\n'),
   'shop.buy.success':
     '✅ Mua thành công!\n\nSản phẩm: *{name}*\nSố lượng: *{qty}*\nTổng: *{total}*\n\nGiao hàng:\n```\n{delivery}\n```',
+  'shop.buy.supplier_unavailable':
+    'This item is temporarily unavailable. Please try again later or contact support.',
   'shop.buy.insufficient':
     '❌ Số dư ví không đủ. Cần *{need}* nhưng chỉ có *{have}*. Vui lòng nạp tiền trước.',
   'shop.buy.no_stock': '❌ Xin lỗi, sản phẩm đã hết hàng.',
