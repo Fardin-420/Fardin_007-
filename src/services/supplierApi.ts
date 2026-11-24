@@ -592,6 +592,35 @@ export function supplierSellPrice(
 }
 
 /**
+ * Keyword routing for imported supplier products.
+ *
+ * Suppliers rarely send a category, so without this every product lands in
+ * one bucket and the shop becomes unbrowsable as the catalogue grows. First
+ * match wins, so narrower patterns come first.
+ */
+const SUPPLIER_CATEGORY_RULES: Array<[string, RegExp]> = [
+  [
+    '🤖 AI & Automation',
+    /chatgpt|claude|gemini|google ai|grok|muse|seedance|kling|elevenlabs|lovable|bolt\.new|replit|descript|pangram|wispr|antigravity|perplexity|midjourney|copilot/i,
+  ],
+  ['🎨 Design & Creative', /figma|capcut|canva|adobe|framer|magic pattern|mobbin|picsart/i],
+  ['🎬 Streaming & Music', /spotify|apple music|apple tv|crunchyroll|osn|netflix|youtube premium|deezer|shahid/i],
+  ['🔐 VPN & Security', /\bvpn\b|hotspot shield|nordvpn|expressvpn|pandavpn|surfshark|proton/i],
+  ['🎓 Education', /duolingo|udemy|\bedx\b|coursera|skillshare|quizlet|chegg/i],
+  ['📧 Mail & Accounts', /hotmail|outlook|gmail|\bmail\b/i],
+  [
+    '💼 Productivity & Business',
+    /notion|zoom|office 365|microsoft office|granola|ilovepdf|joinsecret|warp|railway|customer\.io|intercom|discord|nitro|slack|trello/i,
+  ],
+];
+
+/** Pick the category an imported product belongs in, by its name. */
+export function supplierCategoryFor(name: string, fallback: string): string {
+  const hit = SUPPLIER_CATEGORY_RULES.find(([, rx]) => rx.test(name));
+  return hit ? hit[0] : fallback;
+}
+
+/**
  * Pull the display fields a supplier ships alongside price and stock, so an
  * imported product arrives with its real description and its icon rather than
  * a bare placeholder.
@@ -654,8 +683,12 @@ export async function importSupplierProduct(args: {
     }
   }
 
+  // Route by product name so the catalogue stays browsable; the configured
+  // import category is the fallback for anything no rule matches.
+  const fallbackCategory =
+    args.categoryName ?? args.source.import_category_name ?? `Supplier - ${args.source.name}`;
   const category = await getOrCreateCategory(
-    args.categoryName ?? args.source.import_category_name ?? `Supplier - ${args.source.name}`,
+    supplierCategoryFor(args.product.name, fallbackCategory),
     '🔌',
   );
   const stock = args.product.stock ?? 0;
