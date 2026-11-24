@@ -77,6 +77,7 @@ export function shopProductsKeyboard(
 
   const defaultInStockIcon = premiumIconId('orders_product');
   const oosIcon = premiumIconId('gift_invalid');
+  let pendingGroupsInRow = 0;
 
   products.forEach((entry) => {
     if (entry.kind === 'group') {
@@ -85,13 +86,23 @@ export function shopProductsKeyboard(
       const iconId = emojiParts.iconId ?? nameParts.iconId;
       const prefix = iconId ? '' : (emojiParts.label || emojiParts.fallback ? `${emojiParts.label || emojiParts.fallback} ` : '');
       const name = nameParts.label || nameParts.fallback || entry.name;
-      const label = `${prefix}${name} ▸ ${entry.count} plans (${formatPriceWithCurrency(entry.min_price, currency)}+)`.trim();
+      const label = `${prefix}${name} (${entry.count})`.trim();
       kb.text(label, `grp:${entry.category_id}`);
       if (iconId) kb.icon(iconId);
       const style = colorModeToStyle(entry.in_stock ? getStateColor('in_stock') : getStateColor('out_of_stock'));
       if (style !== undefined) kb.style(style);
-      kb.row();
+      // Brand buttons sit two to a row; a product row is full width, so
+      // flush a half-filled pair before one is emitted (handled below).
+      pendingGroupsInRow += 1;
+      if (pendingGroupsInRow === 2) {
+        kb.row();
+        pendingGroupsInRow = 0;
+      }
       return;
+    }
+    if (pendingGroupsInRow > 0) {
+      kb.row();
+      pendingGroupsInRow = 0;
     }
     const p = entry.product;
     const inStock = p.unlimited_stock || p.stock > 0;
@@ -131,6 +142,8 @@ export function shopProductsKeyboard(
     if (style !== undefined) kb.style(style);
     kb.row();
   });
+
+  if (pendingGroupsInRow > 0) kb.row();
 
   // Footer layout (bot-owner spec v2): the page indicator always
   // lives in the middle, the page-nav arrow takes its natural side

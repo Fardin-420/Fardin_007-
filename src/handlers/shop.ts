@@ -81,11 +81,14 @@ import {
  * `Available Products:` header and a Prev / Refresh / Next / Back
  * footer.
  */
-function categoryCanGroup(name: string): boolean {
-  return /\b(all|plans?|subscription|bundle|variants?|section)\b/i.test(name);
+// Every category collapses into a single brand button on the shop home.
+// It used to be limited to names containing "all/plans/bundle/...", which
+// left a brand category such as "Adobe" expanded into one row per variant.
+function categoryCanGroup(_name: string): boolean {
+  return true;
 }
 
-function buildShopRows(
+export function buildShopRows(
   products: DBProduct[],
   categories: Array<{ id: number; name: string; emoji: string | null }>,
   grouped = true,
@@ -102,7 +105,9 @@ function buildShopRows(
   const groupedCats = new Set<number>();
   for (const [catId, rows] of byCat) {
     const cat = catById.get(catId);
-    if (cat && rows.length >= 2 && categoryCanGroup(cat.name)) groupedCats.add(catId);
+    // A single-variant brand is still shown as its own brand button, the
+    // same as every other brand, rather than as a loose product row.
+    if (cat && rows.length >= 1 && categoryCanGroup(cat.name)) groupedCats.add(catId);
   }
 
   const out: ShopProductRow[] = [];
