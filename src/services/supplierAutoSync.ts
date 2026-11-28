@@ -11,6 +11,7 @@ import {
   importSupplierProduct,
   isSupplierMigrationError,
   syncSupplierProductLink,
+  type SupplierCatalogProduct,
 } from './supplierApi.js';
 
 const DEFAULT_SUPPLIER_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -52,11 +53,23 @@ export async function syncSupplierStocksOnce(api: Api): Promise<{
         throw err;
       });
 
+      // One catalogue fetch serves every link of this source. Fetching per
+      // link meant 61 identical requests a cycle against a 30/minute limit,
+      // which starved real purchases of their request budget.
+      let catalog: SupplierCatalogProduct[] | null = null;
+      try {
+        catalog = await fetchSupplierProducts(source, { force: true });
+      } catch (err) {
+        failed += 1;
+        logger.warn({ err, supplierId: source.id }, 'supplier catalog fetch failed');
+      }
+      if (catalog === null) continue;
+
       for (const link of links) {
         if (!link.auto_sync_stock) continue;
         checked += 1;
         try {
-          const result = await syncSupplierProductLink(link);
+          const result = await syncSupplierProductLink(link, { source, products: catalog });
           if (result.updatedLocal) updated += 1;
 
           const product = await getProduct(link.local_product_id).catch(() => null);
@@ -75,8 +88,7 @@ export async function syncSupplierStocksOnce(api: Api): Promise<{
           const seen = new Set(
             (await listSupplierProductLinks(source.id)).map((link) => link.supplier_product_id),
           );
-          const products = await fetchSupplierProducts(source);
-          for (const product of products) {
+          for (const product of catalog) {
             if (seen.has(product.id)) continue;
             try {
               const result = await importSupplierProduct({

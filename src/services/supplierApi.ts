@@ -123,6 +123,9 @@ export type SupplierLinkConfig = {
 };
 
 export class SupplierApiError extends Error {
+  /** Set when the supplier answered 429; how long to wait before retrying. */
+  retryAfterMs?: number;
+
   constructor(message: string) {
     super(message);
   }
@@ -428,7 +431,42 @@ function authHeaders(source: DBSupplierApiSource): Record<string, string> {
   return headers;
 }
 
+/**
+ * One request, retried when the supplier answers 429.
+ *
+ * Suppliers cap requests per minute (LaraStock: 30). A burst elsewhere can
+ * leave a real purchase rejected even though the buyer has already been
+ * charged, so a rate-limited call waits and tries again rather than failing
+ * the order outright. Retries honour Retry-After when the supplier sends it.
+ */
+const RATE_LIMIT_RETRIES = 3;
+
 async function supplierFetch(
+  source: DBSupplierApiSource,
+  path: string,
+  method: SupplierOrderMethod = 'GET',
+  payload?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>,
+): Promise<unknown> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRIES; attempt += 1) {
+    try {
+      return await supplierFetchOnce(source, path, method, payload, extraHeaders);
+    } catch (err) {
+      lastErr = err;
+      const retryAfter = err instanceof SupplierApiError ? err.retryAfterMs : undefined;
+      if (retryAfter === undefined || attempt === RATE_LIMIT_RETRIES) throw err;
+      logger.warn(
+        { supplierId: source.id, path, attempt: attempt + 1, waitMs: retryAfter },
+        'supplier rate limited - retrying',
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryAfter));
+    }
+  }
+  throw lastErr;
+}
+
+async function supplierFetchOnce(
   source: DBSupplierApiSource,
   path: string,
   method: SupplierOrderMethod = 'GET',
@@ -463,7 +501,16 @@ async function supplierFetch(
     }
     if (!res.ok) {
       const sample = bodyText.replace(/\s+/g, ' ').slice(0, 300);
-      throw new SupplierApiError(`HTTP ${res.status} from ${url.hostname}: ${sample || res.statusText}`);
+      const error = new SupplierApiError(
+        `HTTP ${res.status} from ${url.hostname}: ${sample || res.statusText}`,
+      );
+      if (res.status === 429) {
+        const header = Number(res.headers.get('retry-after'));
+        // Default to 20s: the usual window is per minute, and three tries
+        // then span it without hammering the supplier.
+        error.retryAfterMs = Number.isFinite(header) && header > 0 ? header * 1000 : 20_000;
+      }
+      throw error;
     }
     return json;
   } catch (err) {
@@ -554,9 +601,31 @@ export async function fetchSupplierBalance(
   );
 }
 
+/**
+ * Short-lived catalogue cache.
+ *
+ * Suppliers rate-limit (LaraStock allows 30 requests/minute) and the stock
+ * sync used to pull the whole catalogue once per linked product - 61 identical
+ * requests every five minutes, which exhausted the budget and made real
+ * purchases fail with HTTP 429. One fetch now serves every caller in the
+ * window, and `force` is there for a caller that must see fresh stock.
+ */
+const CATALOG_CACHE_MS = 60_000;
+const catalogCache = new Map<
+  number,
+  { at: number; products: SupplierCatalogProduct[] }
+>();
+
+export function invalidateSupplierCatalog(supplierId: number): void {
+  catalogCache.delete(supplierId);
+}
+
 export async function fetchSupplierProducts(
   source: DBSupplierApiSource,
+  opts: { force?: boolean } = {},
 ): Promise<SupplierCatalogProduct[]> {
+  const hit = catalogCache.get(source.id);
+  if (!opts.force && hit && Date.now() - hit.at < CATALOG_CACHE_MS) return hit.products;
   const json = await supplierFetch(source, cleanPath(source.products_path, '/products'));
   const rawProducts =
     deepGet(json, source.products_json_path) ??
@@ -565,9 +634,11 @@ export async function fetchSupplierProducts(
     deepGet(json, 'data') ??
     json;
   const arr = Array.isArray(rawProducts) ? rawProducts : [];
-  return arr
+  const products = arr
     .map((p) => normalizeCatalogProduct(source, p))
     .filter((p): p is SupplierCatalogProduct => p !== null);
+  catalogCache.set(source.id, { at: Date.now(), products });
+  return products;
 }
 
 export async function fetchSupplierOrders(
@@ -1148,13 +1219,17 @@ export async function trySupplierAutoOrder(args: {
   }
 }
 
-export async function syncSupplierProductLink(link: DBSupplierProductLink): Promise<{
+export async function syncSupplierProductLink(
+  link: DBSupplierProductLink,
+  // Supplied by the bulk sync, which fetches the catalogue once per source.
+  preloaded?: { source: DBSupplierApiSource; products: SupplierCatalogProduct[] },
+): Promise<{
   matched: SupplierCatalogProduct | null;
   updatedLocal: boolean;
 }> {
-  const source = await getSupplierApiSource(link.supplier_id);
+  const source = preloaded?.source ?? (await getSupplierApiSource(link.supplier_id));
   if (!source) throw new SupplierApiError('Supplier not found.');
-  const products = await fetchSupplierProducts(source);
+  const products = preloaded?.products ?? (await fetchSupplierProducts(source));
   const matched = products.find((p) => p.id === link.supplier_product_id) ?? null;
   if (!matched) {
     await updateSupplierProductLink(link.id, {
